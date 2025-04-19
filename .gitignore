@@ -7,3 +7,6 @@ ENV/
 
 # Idea
 .idea
+
+# results and output files from the code
+scratch/
