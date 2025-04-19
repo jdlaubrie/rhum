@@ -1,0 +1,9 @@
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Idea
+.idea

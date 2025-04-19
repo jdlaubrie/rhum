@@ -19,7 +19,7 @@ reg = 'L2'
 pen = 0.01  # Use 0 for no regularization
 
 #=======================================================================================#
-path = "./" # change to where you download this
+path = "../"  # change to where you download this
 path2data = path + 'data/'
 # setting working path
 # Make path to save results to
