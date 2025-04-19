@@ -1,5 +1,6 @@
 import tensorflow as tf
-import tensorflow.keras.backend as K
+import keras
+from tensorflow.keras import backend
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score
@@ -7,20 +8,19 @@ import copy
 import os
 import json
 import pandas as pd
-from sys import exit
+#from sys import exit
 
 #=======================================================================================#
-epochs = 2000
+epochs = 3000
 batch_size = 8
 
 ### Choose regularization type & penalty amount
 # Option: 'L1', 'L2'
-reg = 'L2'
-pen = 0.01  # Use 0 for no regularization
+reg = 'L1'
+pen = 0.001  # Use 0 for no regularization
 
 #=======================================================================================#
-path = "../"  # change to where you download this
-path2data = path + 'data/'
+path2data = "./" + 'data/'
 # setting working path
 # Make path to save results to
 def makeDIR(path):
@@ -28,7 +28,7 @@ def makeDIR(path):
         os.makedirs(path)
 
 filename = 'ferruzzi13_cca' # Change to keep track of different data e.g. Brain, Skin, Muscle, etc.
-path2scratch = path + 'scratch/' + filename
+path2scratch = "../" + 'scratch/' + filename
 makeDIR(path2scratch)
 
 model_summary = path2scratch + '/cann_summary.txt'
@@ -37,9 +37,9 @@ model_summary = path2scratch + '/cann_summary.txt'
 # L1 and L2 regularization with penalty weight
 def regularize(reg, pen):
     if reg == 'L2':
-        return tf.keras.regularizers.L2(pen)
+        return keras.regularizers.L2(pen)
     elif reg == 'L1':
-        return tf.keras.regularizers.L1(pen)
+        return keras.regularizers.L1(pen)
     else:
         raise ValueError("Regularization type must be 'L1' or 'L2'")
 
@@ -86,57 +86,58 @@ def activation_exp(x):
 
 # Step 4: Build the Model
 initializer_def = 'glorot_normal'
-initializer_exp = tf.keras.initializers.RandomUniform(minval=0.0, maxval=0.1, seed=np.random.randint(0,10000)) # use random integer as seed
+initializer_exp = keras.initializers.RandomUniform(minval=0.0, maxval=0.1, seed=np.random.randint(0,10000)) # use random integer as seed
 
 # Define input layer. layer 0
-input1_layer = tf.keras.Input(shape=(1,), name='I1')
-input2_layer = tf.keras.Input(shape=(1,), name='I2')
-input4_layer = tf.keras.Input(shape=(1,), name='I4')
-input_layer = [input1_layer, input2_layer, input4_layer]
+input1_layer = keras.Input(shape=(1,), name='I1')
+input2_layer = keras.Input(shape=(1,), name='I2')
+input4_layer = keras.Input(shape=(1,), name='I4')
+input5_layer = keras.Input(shape=(1,), name='I5')
+input_layer = [input1_layer, input2_layer, input4_layer, input5_layer]
 
 idi = 0
 all_invariants = []
 for id1, invariant in enumerate(input_layer):
     # this would be layer 1
-    if invariant is input4_layer:
-        layer1_lin = tf.keras.layers.Lambda(lambda x: (x - 1.0), name='diff1'+str(id1+1)+'_lin')(invariant)
-        layer1_sqr = tf.keras.layers.Lambda(lambda x: tf.math.square(x - 1.0), name='diff1'+str(id1+1)+'_sqr')(invariant)
+    if (invariant is input4_layer) or (invariant is input5_layer):
+        layer1_lin = keras.layers.Lambda(lambda x: (x - 1.0), name='diff1'+str(id1+1)+'_lin')(invariant)
+        layer1_sqr = keras.layers.Lambda(lambda x: tf.math.square(x - 1.0), name='diff1'+str(id1+1)+'_sqr')(invariant)
     else:
-        layer1_lin = tf.keras.layers.Lambda(lambda x: (x - 3.0), name='diff1'+str(id1+1)+'_lin')(invariant)
-        layer1_sqr = tf.keras.layers.Lambda(lambda x: tf.math.square(x - 3.0), name='diff1'+str(id1+1)+'_sqr')(invariant)
+        layer1_lin = keras.layers.Lambda(lambda x: (x - 3.0), name='diff1'+str(id1+1)+'_lin')(invariant)
+        layer1_sqr = keras.layers.Lambda(lambda x: tf.math.square(x - 3.0), name='diff1'+str(id1+1)+'_sqr')(invariant)
 
     # Define multiple dense layers. this would be layer 2
     collect = []
     for id2, layer1 in enumerate([layer1_lin,layer1_sqr]):
-        dense_1 = tf.keras.layers.Dense(1, kernel_initializer=initializer_def,
-                                        kernel_constraint=tf.keras.constraints.NonNeg(),
+        dense_1 = keras.layers.Dense(1, kernel_initializer=initializer_def,
+                                        kernel_constraint=keras.constraints.NonNeg(),
                                         kernel_regularizer=regularize(reg, pen),
                                         use_bias=False, activation=None,
                                         name='w1_'+str(idi+id2*2+1))(layer1)
-        dense_2 = tf.keras.layers.Dense(1, kernel_initializer=initializer_exp,
-                                        kernel_constraint=tf.keras.constraints.NonNeg(),
+        dense_2 = keras.layers.Dense(1, kernel_initializer=initializer_exp,
+                                        kernel_constraint=keras.constraints.NonNeg(),
                                         kernel_regularizer=regularize(reg, pen),
                                         use_bias=False, activation=activation_exp,
                                         name='w1_'+str(idi+id2*2+2))(layer1)
         collect.append(dense_1)
         collect.append(dense_2)
 
-    collect = tf.keras.layers.concatenate(collect, axis=1)
+    collect = keras.layers.concatenate(collect, axis=1)
     idi += collect.shape[1]
     all_invariants.append(collect)
 
 # Concatenate the outputs of the dense layers
-concatenated = tf.keras.layers.concatenate(all_invariants, axis=1)
+concatenated = keras.layers.concatenate(all_invariants, axis=1)
 terms = concatenated.shape[1]
 
 # Add an output layer
-output_layer = tf.keras.layers.Dense(1, kernel_initializer=initializer_def,
-                                     kernel_constraint=tf.keras.constraints.NonNeg(),
+output_layer = keras.layers.Dense(1, kernel_initializer=initializer_def,
+                                     kernel_constraint=keras.constraints.NonNeg(),
                                      kernel_regularizer=regularize(reg, pen),
                                      use_bias=False, activation=None, name='w2_x')(concatenated)
 
 # Create the model
-psi_model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer, name='psi')
+psi_model = keras.models.Model(inputs=input_layer, outputs=output_layer, name='psi')
 
 # Print the model summary
 psi_model.summary()
@@ -146,23 +147,25 @@ with open(model_summary, 'w') as fh:
     psi_model.summary(line_length=80, print_fn=lambda x: fh.write(x + '\n'))  # summarize layers in architecture
 
 #=======================================================================================#
+phi_0 = 0.2*np.pi
+phi_f = tf.constant(phi_0, dtype='float32')
+two = tf.constant(2.0, dtype='float32')
+four = tf.constant(2.0, dtype='float32')
+stretch2 = tf.constant(stretch_long, dtype='float32')
+
 # Tension stress
 def stress_circ_th(inputs):
-    (dPsidI1, dPsidI2, dPsidI4, stretch1, stretch2, I1) = inputs
-    two = tf.constant(2.0, dtype='float32')
-    phi_f = tf.constant(0.25*np.pi, dtype='float32')
+    (dPsidI1, dPsidI2, dPsidI4, dPsidI5, stretch1, I1) = inputs
     stretch3 = stretch1*stretch2
-    minus  = two*(dPsidI1 + dPsidI2*(I1-K.pow(stretch3,2)))*K.pow(stretch3,2)
-    stress = two*(dPsidI1 + dPsidI2*(I1-K.pow(stretch1,2)) + two*dPsidI4*K.cos(phi_f)*K.cos(phi_f))*K.pow(stretch1,2) - minus
+    minus  = two*(dPsidI1 + dPsidI2 * (I1 - backend.pow(stretch3, 2))) * backend.pow(stretch3, 2)
+    stress = two*(dPsidI1 + dPsidI2*(I1 - backend.pow(stretch1, 2)) + two*dPsidI4*backend.cos(phi_f)*backend.cos(phi_f) + four*dPsidI5*backend.pow(stretch1,2)*backend.cos(phi_f)*backend.cos(phi_f))*backend.pow(stretch1,2) - minus
     return stress
 
 def stress_long_th(inputs):
-    (dPsidI1, dPsidI2, dPsidI4, stretch1, stretch2, I1) = inputs
-    two = tf.constant(2.0, dtype='float32')
-    phi_f = tf.constant(0.25*np.pi, dtype='float32')
+    (dPsidI1, dPsidI2, dPsidI4, dPsidI5, stretch1, I1) = inputs
     stretch3 = stretch1*stretch2
-    minus  = two*(dPsidI1 + dPsidI2*(I1-K.pow(stretch3,2)))*K.pow(stretch3,2)
-    stress = two*(dPsidI1 + dPsidI2*(I1-K.pow(stretch2,2)) + two*dPsidI4*K.sin(phi_f)*K.sin(phi_f))*K.pow(stretch2,2) - minus
+    minus  = two*(dPsidI1 + dPsidI2*(I1 - backend.pow(stretch3, 2))) * backend.pow(stretch3, 2)
+    stress = two*(dPsidI1 + dPsidI2*(I1 - backend.pow(stretch2, 2)) + two*dPsidI4*backend.sin(phi_f)*backend.sin(phi_f) + four*dPsidI5*backend.pow(stretch2,2)*backend.sin(phi_f)*backend.sin(phi_f))*backend.pow(stretch2,2) - minus
     return stress
 
 # Gradient function
@@ -171,64 +174,70 @@ def my_gradient(a, b):
     return der[0]
 
 # outer diameter as an input
-outer_diameter_tf = tf.keras.layers.Input(shape=(1,), name='d_o')
+outer_diameter_tf = keras.layers.Input(shape=(1,), name='d_o')
 
 # computed-measured quantities. we use length invivo because the test is at invivo stretch level
-inner_diameter_tf = tf.keras.layers.Lambda(lambda x: tf.math.sqrt(x**2-vol_0/(np.pi*length_0*stretch_long)),
+inner_diameter_tf = keras.layers.Lambda(lambda x: 2.0*tf.math.sqrt(0.25*x**2-vol_0/(np.pi*length_0*stretch_long)),
                                            name='d_i')(outer_diameter_tf)
-thickness_tf = tf.keras.layers.Lambda(lambda x: 0.5*(x[0]-x[1]),
+thickness_tf = keras.layers.Lambda(lambda x: 0.5*(x[0]-x[1]),
                                       name='h')([outer_diameter_tf, inner_diameter_tf])
 
 # stretch as input
-stretch1 = tf.keras.layers.Lambda(lambda x: (2.0*x[0]-x[1])/(2.0*outer_diameter_0-thickness_0),
+stretch1 = keras.layers.Lambda(lambda x: (x[0]-x[1])/(outer_diameter_0-thickness_0),
                                   name='stretch1')([outer_diameter_tf, thickness_tf])
-stretch2 = tf.constant(stretch_long, dtype='float32')
 
 # specific Invariants in uni-axial tension
-I1_biax = tf.keras.layers.Lambda(lambda x: x[0]**2 + x[1]**2 + 1.0/(x[0]*x[1])**2,
+I1_biax = keras.layers.Lambda(lambda x: x[0]**2 + x[1]**2 + 1.0/(x[0]*x[1])**2,
                                  name='I1_biax')([stretch1, stretch2])
-I2_biax = tf.keras.layers.Lambda(lambda x: 1.0/x[0]**2 + 1.0/x[1]**2 + (x[0]*x[1])**2,
+I2_biax = keras.layers.Lambda(lambda x: 1.0/x[0]**2 + 1.0/x[1]**2 + (x[0]*x[1])**2,
                                  name='I2_biax')([stretch1, stretch2])
-I4_biax = tf.keras.layers.Lambda(lambda x: (x[0]*tf.math.cos(0.25*np.pi))**2 + (x[1]*tf.math.sin(0.25*np.pi))**2,
+I4_biax = keras.layers.Lambda(lambda x: (x[0]*tf.math.cos(phi_0))**2 + (x[1]*tf.math.sin(phi_0))**2,
                                  name='I4_biax')([stretch1, stretch2])
+I5_biax = keras.layers.Lambda(lambda x: (tf.math.cos(phi_0)*x[0]**2)**2 + (tf.math.sin(phi_0)*x[1]**2)**2,
+                                 name='I5_biax')([stretch1, stretch2])
 
 # load specific models
-psi_biax = psi_model([I1_biax, I2_biax, I4_biax])
+psi_biax = psi_model([I1_biax, I2_biax, I4_biax, I5_biax])
 
 # derivative uniaxial tension
-dWdI1_biax = tf.keras.layers.Lambda(lambda x: my_gradient(x[0], x[1]))([psi_biax, I1_biax])
-dWdI2_biax = tf.keras.layers.Lambda(lambda x: my_gradient(x[0], x[1]))([psi_biax, I2_biax])
-dWdI4_biax = tf.keras.layers.Lambda(lambda x: my_gradient(x[0], x[1]))([psi_biax, I4_biax])
+dWdI1_biax = keras.layers.Lambda(lambda x: my_gradient(x[0], x[1]))([psi_biax, I1_biax])
+dWdI2_biax = keras.layers.Lambda(lambda x: my_gradient(x[0], x[1]))([psi_biax, I2_biax])
+dWdI4_biax = keras.layers.Lambda(lambda x: my_gradient(x[0], x[1]))([psi_biax, I4_biax])
+dWdI5_biax = keras.layers.Lambda(lambda x: my_gradient(x[0], x[1]))([psi_biax, I5_biax])
 
 # Stress circumferential tension
-stress_circ_tf = tf.keras.layers.Lambda(function=stress_circ_th,
-                                        name='stress_circ')([dWdI1_biax, dWdI2_biax, dWdI4_biax, stretch1, stretch2, I1_biax])
+stress_circ_tf = keras.layers.Lambda(function=stress_circ_th,
+                                        name='stress_circ')([dWdI1_biax, dWdI2_biax, dWdI4_biax, dWdI5_biax, stretch1, I1_biax])
 # Stress longitudinal tension
-stress_long_tf = tf.keras.layers.Lambda(function=stress_long_th,
-                                        name='stress_long')([dWdI1_biax, dWdI2_biax, dWdI4_biax, stretch1, stretch2, I1_biax])
+stress_long_tf = keras.layers.Lambda(function=stress_long_th,
+                                        name='stress_long')([dWdI1_biax, dWdI2_biax, dWdI4_biax, dWdI5_biax, stretch1, I1_biax])
 
 # theoretical values of ordinates in P-d and f-P graphs, pressure and transducer force
-pressure_tf = tf.keras.layers.Lambda(lambda x: (2.0*x[0]*x[2]/x[1])/pressure_avg,
+pressure_tf = keras.layers.Lambda(lambda x: (2.0*x[0]*x[2]/x[1])/pressure_avg,
                                      name='pressure_th')([stress_circ_tf, inner_diameter_tf, thickness_tf])
-force_tf = tf.keras.layers.Lambda(lambda x: 1.0e-3*np.pi*x[3]*(x[1]*(x[2]+x[3])-0.5*x[0]*x[2])/force_avg,
+force_tf = keras.layers.Lambda(lambda x: 1.0e-3*np.pi*x[3]*(x[1]*(x[2]+x[3])-0.5*x[0]*x[2])/force_avg,
                                   name='force_th')([stress_circ_tf, stress_long_tf, inner_diameter_tf, thickness_tf])
 
 # Define model training for different load case
-model_press = tf.keras.models.Model(inputs=outer_diameter_tf, outputs=pressure_tf)
-model_force = tf.keras.models.Model(inputs=outer_diameter_tf, outputs=force_tf)
+model_press = keras.models.Model(inputs=outer_diameter_tf, outputs=pressure_tf)
+model_force = keras.models.Model(inputs=outer_diameter_tf, outputs=force_tf)
 
 # Combined model
 #model_inflation = tf.keras.models.Model(inputs=[model_circ.inputs, model_long.inputs], outputs=[model_circ.outputs, model_long.outputs])
-model_inflation = tf.keras.models.Model(inputs=outer_diameter_tf, outputs=[pressure_tf, force_tf])
+model_inflation = keras.models.Model(inputs=outer_diameter_tf, outputs=[pressure_tf, force_tf])
 
 model_inflation.summary()
+
+with open(model_summary, 'a') as fh:
+    # Pass the file handle in as a lambda function to make it callable
+    model_inflation.summary(line_length=80, print_fn=lambda x: fh.write(x + '\n'))  # summarize layers in architecture
 
 #=======================================================================================#
 # Step 5: Compile the Model
 # Compile the model
 opti1 = tf.optimizers.Adam(learning_rate=0.001)
-mse_loss = tf.keras.losses.MeanSquaredError()
-metrics = [tf.keras.metrics.MeanSquaredError(), tf.keras.metrics.MeanSquaredError()]
+mse_loss = keras.losses.MeanSquaredError()
+metrics = [keras.metrics.MeanSquaredError(), keras.metrics.MeanSquaredError()]
 model_inflation.compile(optimizer=opti1, loss=mse_loss, metrics=metrics)
 
 # Step 6: Train the Model
@@ -317,4 +326,4 @@ print('R2 longitudinal = ', R2_long)
 
 # Save trained weights and R2 values to txt file
 config = {'Penalty': pen, "R2_circ": R2_circ, "R2_long": R2_long, "weights": weight_matrix.tolist()}
-json.dump(config, open(path2scratch + "/config_file.txt", 'w'))
+json.dump(config, open(path2scratch + "/config_file.txt", 'w') )
