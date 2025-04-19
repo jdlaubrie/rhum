@@ -114,10 +114,10 @@ output_layer = tf.keras.layers.Dense(1, kernel_initializer=initializer_def,
                                      kernel_regularizer=regularize(reg, pen),
                                      use_bias=False, activation=None, name='w2_x')(concatenated)
 
-# Create the model
+# Create the user
 psi_model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer, name='psi')
 
-# Print the model summary
+# Print the user summary
 psi_model.summary()
 
 with open(model_summary, 'w') as fh:
@@ -154,12 +154,12 @@ dWdI1_tension = tf.keras.layers.Lambda(lambda x: myGradient(x[0], x[1]))([psi_te
 # Stress tension
 stress_tension = tf.keras.layers.Lambda(function=stress_calc_tension, name='stress_tension')([dWdI1_tension, stretch])
 
-# Define model training for different load case
+# Define user training for different load case
 model_tension = tf.keras.models.Model(inputs=stretch, outputs=stress_tension)
 
 #=======================================================================================#
 # Step 5: Compile the Model
-# Compile the model
+# Compile the user
 opti1 = tf.optimizers.Adam(learning_rate=0.001)
 mse_loss = tf.keras.losses.MeanSquaredError()
 metrics = [tf.keras.metrics.MeanSquaredError()]
@@ -173,7 +173,7 @@ loss_history = history.history['loss']
 fig, axe = plt.subplots(figsize=[6, 5])  # inches
 axe.plot(loss_history)
 axe.set_yscale('log')
-plt.title('model loss')
+plt.title('user loss')
 plt.ylabel('loss')
 plt.xlabel('epoch')
 plt.savefig(path2scratch + '/plot_loss' + '.pdf')
@@ -208,7 +208,7 @@ plt.close()
 #=======================================================================================#
 plt.rcParams['xtick.major.pad'] = 14 # set plotting parameters
 plt.rcParams['ytick.major.pad'] = 14
-# Plot the contributions of each term to the output of the model
+# Plot the contributions of each term to the output of the user
 fig, axt = plt.subplots(figsize=(12.5, 8.33))
 num_terms = 6
 cmap = plt.get_cmap('jet_r', num_terms)  # define the colormap with the number of terms from the full network
@@ -220,7 +220,7 @@ axt.set_xlim(1, 2.0)
 axt.set_ylim(0, 20.0)
 # colormap
 predictions = np.zeros([input_train.shape[0], terms])
-model_plot = copy.deepcopy(model_weights)  # deep copy model weights
+model_plot = copy.deepcopy(model_weights)  # deep copy user weights
 for i in range(terms):
     model_plot[-1] = np.zeros_like(model_weights[-1])  # w2_x all set to zero
     model_plot[-1][i] = model_weights[-1][i]  # w2_x[i] set to trained value

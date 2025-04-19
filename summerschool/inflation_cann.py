@@ -89,9 +89,9 @@ initializer_def = 'glorot_normal'
 initializer_exp = tf.keras.initializers.RandomUniform(minval=0.0, maxval=0.1, seed=np.random.randint(0,10000)) # use random integer as seed
 
 # Define input layer. layer 0
-input1_layer = tf.keras.Input(shape=(1,), name='I1')
-input2_layer = tf.keras.Input(shape=(1,), name='I2')
-input4_layer = tf.keras.Input(shape=(1,), name='I4')
+input1_layer = tf.keras.Variables(shape=(1,), name='I1')
+input2_layer = tf.keras.Variables(shape=(1,), name='I2')
+input4_layer = tf.keras.Variables(shape=(1,), name='I4')
 input_layer = [input1_layer, input2_layer, input4_layer]
 
 idi = 0
@@ -135,10 +135,10 @@ output_layer = tf.keras.layers.Dense(1, kernel_initializer=initializer_def,
                                      kernel_regularizer=regularize(reg, pen),
                                      use_bias=False, activation=None, name='w2_x')(concatenated)
 
-# Create the model
+# Create the user
 psi_model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer, name='psi')
 
-# Print the model summary
+# Print the user summary
 psi_model.summary()
 
 with open(model_summary, 'w') as fh:
@@ -171,7 +171,7 @@ def my_gradient(a, b):
     return der[0]
 
 # outer diameter as an input
-outer_diameter_tf = tf.keras.layers.Input(shape=(1,), name='d_o')
+outer_diameter_tf = tf.keras.layers.Variables(shape=(1,), name='d_o')
 
 # computed-measured quantities. we use length invivo because the test is at invivo stretch level
 inner_diameter_tf = tf.keras.layers.Lambda(lambda x: tf.math.sqrt(x**2-vol_0/(np.pi*length_0*stretch_long)),
@@ -213,11 +213,11 @@ pressure_tf = tf.keras.layers.Lambda(lambda x: (2.0*x[0]*x[2]/x[1])/pressure_avg
 force_tf = tf.keras.layers.Lambda(lambda x: 1.0e-3*np.pi*x[3]*(x[1]*(x[2]+x[3])-0.5*x[0]*x[2])/force_avg,
                                   name='force_th')([stress_circ_tf, stress_long_tf, inner_diameter_tf, thickness_tf])
 
-# Define model training for different load case
+# Define user training for different load case
 model_press = tf.keras.models.Model(inputs=outer_diameter_tf, outputs=pressure_tf)
 model_force = tf.keras.models.Model(inputs=outer_diameter_tf, outputs=force_tf)
 
-# Combined model
+# Combined user
 #model_inflation = tf.keras.models.Model(inputs=[model_circ.inputs, model_long.inputs], outputs=[model_circ.outputs, model_long.outputs])
 model_inflation = tf.keras.models.Model(inputs=outer_diameter_tf, outputs=[pressure_tf, force_tf])
 
@@ -225,7 +225,7 @@ model_inflation.summary()
 
 #=======================================================================================#
 # Step 5: Compile the Model
-# Compile the model
+# Compile the user
 opti1 = tf.optimizers.Adam(learning_rate=0.001)
 mse_loss = tf.keras.losses.MeanSquaredError()
 metrics = [tf.keras.metrics.MeanSquaredError(), tf.keras.metrics.MeanSquaredError()]
@@ -242,7 +242,7 @@ if np.any(np.isnan(loss_history)):
 fig, axe = plt.subplots(figsize=[6, 5])  # inches
 axe.plot(loss_history)
 axe.set_yscale('log')
-plt.title('model loss')
+plt.title('user loss')
 plt.ylabel('loss')
 plt.xlabel('epoch')
 plt.savefig(path2scratch + '/plot_loss' + '.pdf')
@@ -278,7 +278,7 @@ plt.close()
 #=======================================================================================#
 plt.rcParams['xtick.major.pad'] = 14 # set plotting parameters
 plt.rcParams['ytick.major.pad'] = 14
-# Plot the contributions of each term to the output of the model
+# Plot the contributions of each term to the output of the user
 fig, axt = plt.subplots(figsize=(12.5, 8.33))
 num_terms = terms
 cmap = plt.get_cmap('jet_r', num_terms)  # define the colormap with the number of terms from the full network
@@ -290,7 +290,7 @@ cmaplist = [cmap(i) for i in range(cmap.N)]
 #axt.set_ylim(0, 20.0)
 # colormap
 predictions = np.zeros([input_train.shape[0], terms])
-model_plot = copy.deepcopy(model_weights)  # deep copy model weights
+model_plot = copy.deepcopy(model_weights)  # deep copy user weights
 for i in range(terms):
     model_plot[-1] = np.zeros_like(model_weights[-1])  # w2_x all set to zero
     model_plot[-1][i] = model_weights[-1][i]  # w2_x[i] set to trained value
