@@ -19,8 +19,6 @@ reg = 'L2'
 pen = 0.01  # Use 0 for no regularization
 
 #=======================================================================================#
-path = "../"  # change to where you download this
-path2data = path + 'data/'
 # setting working path
 # Make path to save results to
 def makeDIR(path):
@@ -28,7 +26,7 @@ def makeDIR(path):
         os.makedirs(path)
 
 filename = 'ferruzzi13_cca' # Change to keep track of different data e.g. Brain, Skin, Muscle, etc.
-path2scratch = path + 'scratch/' + filename
+path2scratch = '../scratch/' + filename
 makeDIR(path2scratch)
 
 model_summary = path2scratch + '/cann_summary.txt'
@@ -45,6 +43,7 @@ def regularize(reg, pen):
 
 #=======================================================================================#
 # Step 3: Prepare Data
+path2data = './data'
 mmhg2kpa = 0.133322
 # Generate synthetic data
 # read data from file. lagrangian stress

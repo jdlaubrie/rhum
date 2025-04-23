@@ -1,12 +1,19 @@
 import copy
 import json
 from pathlib import Path
+from sys import path
 
 import keras
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 from sklearn.metrics import r2_score
+
+dir = Path.cwd()
+print(dir)
+print(dir.parent)
+
+path.append(str(dir.parent))
 
 import activation.functions as activation
 import math_util.util as util
