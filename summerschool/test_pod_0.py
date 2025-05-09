@@ -65,6 +65,15 @@ class Circle(Domain):
                                                 self.r), index + 1
 
 def geo_mesh(domain, stepsize, structured=False):
+    """
+    Input
+        domain   (Domain)  object with the geometry\n
+        stepsize (float)   Element size\n
+
+    Output
+        (dolfin.cpp.mesh.Mesh)\n
+    """
+
     if (structured and domain.dim != 2):
         raise RuntimeError("Structured meshes are only available for 2D geometries.")
     code = 'SetFactory("OpenCASCADE");\nMesh.CharacteristicLengthMin = %f;\nMesh.CharacteristicLengthMax = %f;\n' % (
@@ -145,15 +154,15 @@ def fe_space(mesh, obj, deg, scalar=True, bubble=False):
     Note: only constructs FE spaces of scalar-valued functions.
 
     Input
-        mesh    (dolfin.cpp.mesh.Mesh)  Underlying mesh of reference
-        obj     (str)                   Type of space. 'CG' = Continuous Galerkin, 'DG' = Discontinuous Galerkin
-        deg     (int)                   Polynomial degree at each element
+        mesh    (dolfin.cpp.mesh.Mesh)  Underlying mesh of reference\n
+        obj     (str)                   Type of space. 'CG' = Continuous Galerkin, 'DG' = Discontinuous Galerkin\n
+        deg     (int)                   Polynomial degree at each element\n
         scalar  (bool)                  Whether the space consists of scalar or vector-valued functions (in which
-                                        case scalar == True and scalar == False respectively). Defaults to True.
-        bubble  (bool)                  If True, enriches each element with bubble polynomials. Defaults to False.
+                                        case scalar == True and scalar == False respectively). Defaults to True\n
+        bubble  (bool)                  If True, enriches each element with bubble polynomials. Defaults to False\n
 
     Output
-        (dolfin.function.functionspace.FunctionSpace).
+        (dolfin.function.functionspace.FunctionSpace)\n
     """
     if (scalar):
         if (bubble):
@@ -423,9 +432,10 @@ def POD(U, k):
         U0 = U.cpu().numpy()
     else:
         U0 = U
-    M = np.dot(U0, U0.T)
-    N = U.shape[0]
-    w, v = eigh(M, subset_by_index=(N-k, N-1))
+    M = np.dot(U0, U0.T)                    # (ntrain,nnodes)*(ntrain,nnodes).T -> (ntrain,ntrain)
+    N = U.shape[0]                          # matrix size, number of eigenvalues
+    # compute egienvalues (w) and eigenvectors (v)
+    w, v = eigh(M, subset_by_index=(N-k, N-1))              # pick the k-ths biggest values
     basis, eigenvalues = np.dot((v/np.sqrt(w)).T, U0), w
     basis, eigenvalues = np.flip(basis, axis = 0)+0, np.flip(eigenvalues)+0
     if (isinstance(U, torch.Tensor)):
@@ -445,7 +455,7 @@ def gramschmidt(V):
 def project(vbasis, u, orth = True):
     """Given a sequence of basis vbasis = [V1,..., Vk], where Vj has shape (b, Nh), and
     a sequence of vectors u = [u1,...,uk], where uj has length Nh, yields the batched
-    matrix vector multiplication [Vj'Vjuj], i.e. the sequence of reconstructed vectors."""
+    matrix vector multiplication [(Vj'*Vj)*uj], i.e. the sequence of reconstructed vectors."""
     if(len(vbasis.shape)<3):
         return project(vbasis.unsqueeze(0), u, orth)
     else:
@@ -457,18 +467,18 @@ def project(vbasis, u, orth = True):
 def projectdown(vbasis, u):
     """Given a sequence of basis vbasis = [V1,..., Vk], where Vj has shape (b, Nh), and
     a sequence of vectors u = [u1,...,uk], where uj has length Nh, yields the batched
-    matrix vector multiplication [Vjuj], i.e. the sequence of basis coefficients."""
+    matrix vector multiplication [Vj*uj], i.e. the sequence of basis coefficients."""
     if(len(vbasis.shape)<3):
-      return projectdown(vbasis.unsqueeze(0), u)
+        return projectdown(vbasis.unsqueeze(0), u)
     else:
-      nh = np.prod(u[0].shape)
-      n, nb = vbasis.shape[:2]
-      return vbasis.reshape(n, nb, -1).matmul(u.reshape(-1,nh,1))
+        nh = np.prod(u[0].shape)
+        n, nb = vbasis.shape[:2]
+        return vbasis.reshape(n, nb, -1).matmul(u.reshape(-1,nh,1))
 
 def projectup(vbasis, c):
     """Given a sequence of basis vbasis = [V1,..., Vk], where Vj has shape (b, Nh), and
     a sequence of coefficients c = [c1,...,ck], where cj has length b, yields the batched
-    matrix vector multiplication [Vj.Tcj], i.e. the sequence of expanded vectors."""
+    matrix vector multiplication [Vj.T*cj], i.e. the sequence of expanded vectors."""
     if(len(vbasis.shape)<3):
       return projectup(vbasis.unsqueeze(0), c)
     else:
@@ -707,9 +717,8 @@ class Sparse(Layer):
         self.core = core
         with torch.no_grad():
             if (core == GPU):
-                raise ValueError("not implemented")
-#                self.weight = torch.nn.Parameter(self.weight.cuda())
-#                self.bias = torch.nn.Parameter(self.bias.cuda())
+                self.weight = torch.nn.Parameter(self.weight.cuda())
+                self.bias = torch.nn.Parameter(self.bias.cuda())
             else:
                 self.weight = torch.nn.Parameter(self.weight.cpu())
                 self.bias = torch.nn.Parameter(self.bias.cpu())
@@ -1160,58 +1169,64 @@ scratch_folder_path.mkdir(parents=True, exist_ok=True)
 #========================================================================================#
 # Full order model (FOM solver)
 # Mesh generation
-domain = Circle((0,0), 1) - Circle((0,0), 0.5)
+domain = Circle((0,0), 1.0) - Circle((0,0), 0.5)
 mesh = geo_mesh(domain, stepsize = 0.3) # dolfin mesh with its objects
 fe_plot(mesh)
 plt.title("High fidelity mesh ($N_{h}$=%d)" % mesh.num_vertices())
 plt.savefig(Path(scratch_folder_path, 'mesh_pic.pdf'))
 plt.close()
-#plt.show()
 
-# Ground truth model
-space = fe_space(mesh, 'CG', 1) # piecewise linear polynomials
-x, y = fe_coordinates(space).T  # mesh coordinates
+# Ground-truth model, shape functions and node coordinates
+space = fe_space(mesh, 'CG', 1)     # piecewise linear polynomials
+x, y = fe_coordinates(space).T              # mesh node coordinates
 
-x, y = CPU.tensor(x), CPU.tensor(y)  #make a torch tensor out of numpy array
+# torch tensor and polar coordinates
+x, y = CPU.tensor(x), CPU.tensor(y)                #make a CPU-torch tensor from a numpy array
 r, theta = (x**2 + y**2).sqrt(), torch.atan2(x, y) #convert to polar coordinates (x,y)->(r,theta)
 
+# solution function
 # eps -> diffusion, omega -> advection
 def solution(t, eps, omega):
-  T = CPU.tensor([t])
-  d2 = (torch.cos(theta) - torch.cos(omega*T))**2 + (torch.sin(theta) - torch.sin(omega*T))**2
-  return (r-0.5)*(1.0-r)*torch.exp(- d2 /(2*eps*T) )
+    """
+    Output
+        sol  (torch tensor)  solution tensor at nodes (r,theta)
+    """
+    T = CPU.tensor([t])
+    d2 = (torch.cos(theta) - torch.cos(omega*T))**2 + (torch.sin(theta) - torch.sin(omega*T))**2
+    return (r-0.5)*(1.0-r)*torch.exp(- d2 /(2.0*eps*T) )
 
+# a picture of the solution field at t=0.5
 u = solution(t = 0.5, eps = 1, omega = 1)  #scalar solution at nodes
 fe_plot(u, space, colorbar = True)
 plt.title("Solution field")
 plt.savefig(Path(scratch_folder_path, 'solution_pic.pdf'))
-#plt.show()
 plt.close()
 
 # Snapshots generation
 eps = [1, 5] #[1, 5] #[0.1, 0.2]
 omega = [1, 2] #[1, 2] #[2, 5]
 time = [0.05, 2]
-ntraject = 40
-timesteps = 50
-nh = space.dim()
-U = CPU.zeros(ntraject, timesteps, nh)
-mu = CPU.zeros(ntraject, timesteps, 3)
+ntraject = 40                 # N experiments
+timesteps = 50                # time steps
+nh = space.dim()              # N nodes
+U = CPU.zeros(ntraject, timesteps, nh)   # solution tensor (n_experiments, time_steps, n_nodes)
+mu = CPU.zeros(ntraject, timesteps, 3)   # normalized tensor (n_experiments, time_steps, 3), elements in [0,1]
 
 dt = (time[1]-time[0])/timesteps
 
-for i in range(ntraject):
-    e0, o0 = CPU.rand(), CPU.rand()  #random array with numbers in [0,1)
-    e = (eps[1]-eps[0])*e0+eps[0]
-    o = (omega[1]-omega[0])*o0+omega[0]
-    for j in range(timesteps):
-      t = time[0]+j*dt            # time at each step
-      U[i,j] = solution(t, e, o)  # solution by traject and time_step
+for i in range(ntraject):                        # loop on n_experiemnts
+    e0, o0 = CPU.rand(), CPU.rand()              # random number within [0,1)
+    e = (eps[1]-eps[0])*e0+eps[0]                # random eps
+    o = (omega[1]-omega[0])*o0+omega[0]          # random omega
+    for j in range(timesteps):             # loop on time_steps
+      t = time[0]+j*dt                     # time at each step
+      U[i,j] = solution(t, e, o)           # solution by i_experiment and j_time_step
       # normalized parameters
       mu[i,j,0] = j/timesteps
       mu[i,j,1] = e0
       mu[i,j,2] = o0
 
+# plot experiment=0
 example_name = Path(scratch_folder_path, 'example')
 fe_gif(str(example_name), U[0], dt=dt, T=time[1] - time[0], space=space)
 
@@ -1222,17 +1237,17 @@ fe_gif(str(example_name), U[0], dt=dt, T=time[1] - time[0], space=space)
 # Splitting of the data: we use 50% of the data to design the ROM, and 50% to test its performances
 ntrain = 20
 ntrain *= timesteps
-u = U.reshape(-1, nh) # reshaping so that we list all snapshots one by one
+u = U.reshape(-1, nh) # reshaping so that we list all snapshots one by one (n_experiment*n_steps,n_nodes)
 
-pod, eigs = POD(u[:ntrain], k = 10) # POD basis vectors and corresponding singular values
-# NB: "pod" is a (nmodes,nh) tensor, that is, basis[k] contains the kth POD mode
+# POD: proper orthogonal decomposition
+pod, eigs = POD(u[:ntrain], k = 10) # POD eigenvectors and corresponding eigenvalues
+# NB: "pod" is a (kmodes,nnodes) tensor, that is, basis[k] contains the kth POD mode
 
 plt.figure(figsize = (4,3))
 plt.plot(eigs, '-.', color = 'red')
 plt.title("Singular values decay", fontsize = 10)
 plt.xlabel("# modes")
 plt.savefig(Path(scratch_folder_path, 'pod_values_pic.pdf'))
-#plt.show()
 plt.close()
 
 # Let's visualize some of the basis functions
@@ -1243,17 +1258,20 @@ for j in range(2):
   plt.title("Mode n.%d" % (j+1), fontsize = 10)
 plt.tight_layout()
 plt.savefig(Path(scratch_folder_path, 'modes_pic.pdf'))
-#plt.show()
 plt.close()
+
+# until here space have been used to assign the node coordinates and nodes for solution field
 
 # How well does the POD basis represent solutions?
 l2 = L2(space)
 def mre(utrue, upred):
-  return ( l2(utrue-upred)/l2(utrue) ).mean()
+    print("\nMRE function")
+    return ( l2(utrue-upred)/l2(utrue) ).mean()
 
 urecon = project(pod, u)             # make predictions through the decomposition functions
 print("Mean relative error (training): %s." % num2p(mre(u[ntrain:], urecon[ntrain:])))
 
+# print an experiment; -1 the last one
 which = -1
 Urecon = urecon.reshape(ntraject, timesteps, nh)
 dimred_name = Path(scratch_folder_path, 'dimred')
@@ -1262,13 +1280,18 @@ fe_gifz(str(dimred_name), (U[which], Urecon[which]), dt = dt, T = time[1]-time[0
 #-------------------------------------------------------#
 # b) Learning the POD coordinates
 # Projection onto POD coordinates
-
+#                                                [ntrain, nbasis]
 c = projectdown(pod, u).squeeze(-1) # torch.Size([2000, 10, 1])
 nbasis = c.shape[-1]
 
 # Data reshaping
+print(mu.shape)
 nparams = 3
 mu = mu.reshape(-1, nparams)
+
+print(c.shape)
+print(mu.shape)
+sys.exit()
 
 # Neural network design and initialization
 phi = Dense(nparams, 50) + Dense(50, 50) + Dense(50, nbasis, activation = None)

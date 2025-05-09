@@ -10,89 +10,6 @@ import torch # Pytorch tensors, autodiff...
 import matplotlib.pyplot as plt # Plots
 
 #========================================================================================#
-#=====================    GEOMETRY     ==============================#
-#========================================================================================#
-from IPython.display import clear_output
-
-class Domain(object):
-    def __init__(self, main, other, operation=None):
-        """Combines two domains via the specified operation."""
-        self.a, self.b, self.op = main, other, operation
-        self.index = 0
-        self.dim = max(main.dim, other.dim)
-
-    def script(self, index=1):
-        """Writes a gmsh script describing the domain."""
-        res, j = self.a.script(index)
-        res0, j0 = self.b.script(j)
-        self.index = j0
-        if (self.op == "u"):
-            res0 += "BooleanUnion{%s{%d};}{%s{%d};}\n" % (self.a.entity(), self.a.index,
-                                                        self.b.entity(), self.b.index)
-        elif (self.op == "i"):
-            res0 += "BooleanIntersection{%s{%d};}{%s{%d};}\n" % (self.a.entity(), self.a.index,
-                                                               self.b.entity(), self.b.index)
-        elif (self.op == "d"):
-            res0 += "BooleanDifference{%s{%d};}{%s{%d};}\n" % (self.a.entity(), self.a.index,
-                                                             self.b.entity(), self.b.index)
-        return res + res0, j0 + 1
-
-    def __add__(self, other):
-        return Domain(self, other, "u")
-
-    def __sub__(self, other):
-        return Domain(self, other, "d")
-
-    def __mul__(self, other):
-        return Domain(self, other, "i")
-
-    def entity(self):
-        if self.dim == 2:
-            return "Surface"
-        elif self.dim == 3:
-            return "Volume"
-
-class Circle(Domain):
-    def __init__(self, p, r=1):
-        self.p = p
-        self.r = r
-        self.index = 0
-        self.dim = 2
-
-    def script(self, index=1):
-        self.index = index
-        return 'Disk(%d) = {%f, %f, 0.0, %f};\n' % (index, self.p[0], self.p[1],
-                                                self.r), index + 1
-
-def geo_mesh(domain, stepsize, structured=False):
-    if (structured and domain.dim != 2):
-        raise RuntimeError("Structured meshes are only available for 2D geometries.")
-    code = 'SetFactory("OpenCASCADE");\nMesh.CharacteristicLengthMin = %f;\nMesh.CharacteristicLengthMax = %f;\n' % (
-        stepsize, stepsize)
-    code += domain.script()[0]
-    extra = "\nTransfinite %s {%d};" % (domain.entity(), domain.index) if structured else ""
-    code += '\nPhysical %s(%d) = {%d};%s\nMesh.MshFileVersion = 2.0;' % (domain.entity(),
-                                                                           domain.index + 1,
-                                                                           domain.index,
-                                                                           extra)
-
-    idf = np.random.randint(100000)
-    print(code, file=open('%d.geo' % idf, 'w'))
-    os.system("gmsh -%d %d.geo" % (domain.dim, idf))
-    clear_output(wait=True)
-    os.system("dolfin-convert %d.msh %d.xml" % (idf, idf))
-    clear_output(wait=True)
-    mesh = dolfin.cpp.mesh.Mesh("%d.xml" % idf)
-    os.remove("%d.msh" % idf)
-    os.remove("%d.xml" % idf)
-    try:
-        os.remove("%d_physical_region.xml" % idf)
-    except:
-        None
-    os.remove("%d.geo" % idf)
-    return mesh
-
-#========================================================================================#
 #=====================    GIFS     ==============================#
 #========================================================================================#
 import imageio.v2 as imageio
@@ -135,113 +52,9 @@ def gif_save(drawframe, frames, name, remove=True):
 #========================================================================================#
 #=====================    FINITE ELEMENT     ==============================#
 #========================================================================================#
-from ufl_legacy.finiteelement.mixedelement import VectorElement, FiniteElement
-from ufl_legacy.finiteelement.enrichedelement import NodalEnrichedElement
-from fenics import FunctionSpace
 from fenics import Function
 
-def fe_space(mesh, obj, deg, scalar=True, bubble=False):
-    """Returns the Finite Element (FE) space of specified type (e.g. continuous/discontinuous galerkin) and degree.
-    Note: only constructs FE spaces of scalar-valued functions.
-
-    Input
-        mesh    (dolfin.cpp.mesh.Mesh)  Underlying mesh of reference
-        obj     (str)                   Type of space. 'CG' = Continuous Galerkin, 'DG' = Discontinuous Galerkin
-        deg     (int)                   Polynomial degree at each element
-        scalar  (bool)                  Whether the space consists of scalar or vector-valued functions (in which
-                                        case scalar == True and scalar == False respectively). Defaults to True.
-        bubble  (bool)                  If True, enriches each element with bubble polynomials. Defaults to False.
-
-    Output
-        (dolfin.function.functionspace.FunctionSpace).
-    """
-    if (scalar):
-        if (bubble):
-            element = FiniteElement(obj, mesh.ufl_cell(), deg) + FiniteElement("Bubble",
-                                                                               mesh.ufl_cell(),
-                                                                               mesh.topology().dim() + 1)
-        else:
-            element = FiniteElement(obj, mesh.ufl_cell(), deg)
-    else:
-        if (bubble):
-            element = VectorElement(
-                NodalEnrichedElement(FiniteElement(obj, mesh.ufl_cell(), deg),
-                                     FiniteElement("Bubble", mesh.ufl_cell(),
-                                                   mesh.topology().dim() + 1)))
-        else:
-            element = VectorElement(obj, mesh.ufl_cell(), deg)
-
-    return FunctionSpace(mesh, element)
-
-
-def fe_coordinates(space):
-    """Returns the coordinates of the degrees of freedom for the given functional space.
-
-    Input
-        space   (dolfin.function.functionspace.FunctionSpace).      Functional space for which the dofs have to be located.
-
-    Output
-        (numpy.ndarray).
-    """
-    return space.tabulate_dof_coordinates().astype("float32")
-
-def fe_asvector(u, space):
-    """Given a vector of dof values, returns the corresponding object in the functional space.
-
-    Input
-        u       (numpy.ndarray or torch.Tensor)                     Vector collecting the values of the function at the
-                                                                    degrees of freedom. If u has shape (,n), then
-                                                                    the functional space of interest should have n dof.
-
-        space   (dolfin.function.functionspace.FunctionSpace).      Functional space where u belongs.
-
-    Output
-        (dolfin.function.function.Function).
-
-    """
-    uv = Function(space)
-    udata = u if (not isinstance(u, torch.Tensor)) else u.detach().cpu().numpy()
-    uv.vector()[:] = udata
-    return uv
-
-def fe_plot(obj, space=None, vmin=None, vmax=None, colorbar=False, axis="off", shrink=0.8,
-         levels=200, cmap=None):
-    """Plots mesh and functional objects.
-
-    Input
-        obj         (dolfin.cpp.mesh.Mesh, numpy.ndarray or torch.Tensor)   Object to be plotted. It should be either a mesh
-                                                                            or an array containing the values of some function
-                                                                            at the degrees of freedom.
-        space       (dolfin.function.functionspace.FunctionSpace)           Functional space where 'obj' belongs (assuming 'obj' is not a mesh).
-                                                                            Defaults to None, in which case 'obj' is assumed to be a mesh.
-        vmin        (float)                                                 If a colorbar is added, then the color legend is calibrated in such a way that vmin
-                                                                            is considered the smallest value. Ignored if space = None.
-        vmax        (float)                                                 Analogous to vmin.
-        colorbar    (bool)                                                  Whether to add or not a colorbar. Ignored if len(*args)=1.
-        axis        (obj)                                                   Axis specifics (cf. matplotlib.pyplot.axis). Defaults to "off", thus hiding the axis.
-        shrink      (float)                                                 Shrinks the colorbar by the specified factor (defaults to 0.8). Ignored if colorbar = False.
-    """
-    try:
-        if (space == None):
-            dolfin.common.plotting.plot(obj)
-        else:
-            uv = fe_asvector(obj, space)
-            if (space.element().value_dimension(0) == 1):
-                c = dolfin.common.plotting.plot(uv, vmin=vmin, vmax=vmax,
-                                                levels=np.linspace(float(obj.min()),
-                                                                      float(obj.max()),
-                                                                      levels), cmap=cmap)
-            else:
-                c = dolfin.common.plotting.plot(uv, cmap=cmap)
-            if (colorbar):
-                plt.colorbar(c, shrink=shrink)
-    except:
-        raise RuntimeError(
-            "First argument should be either a dolfin.cpp.mesh.Mesh or a structure containing the dof values of some function (in which case 'space' must be != None).")
-    plt.axis(axis)
-
-
-def fe_gif(name, U, dt, T, space, axis="off", figsize=(4, 4), colorbar=False):
+def fe_gif(name, U, df, P, nodes, figsize=(4, 4)):
     """Builds a GIF animation given the values of a functional object at multiple time steps.
 
     Input
@@ -250,20 +63,18 @@ def fe_gif(name, U, dt, T, space, axis="off", figsize=(4, 4), colorbar=False):
                                                                     values of a functional object at its degrees of freedom.
         dt      (float)                                             Time step with each frame.
         T       (float)                                             Final time. The GIF will have int(T/dt) frames
-        space   (dolfin.function.functionspace.FunctionSpace).      Functional space where the U[i]'s belong.
         axis    (obj)                                               Axis specifics (cf. matplotlib.pyplot.axis). Defaults to "off", thus hiding the axis.
         figsize (tuple)                                             Sizes of the window where to plot, width = figsize[0], height = figsize[1].
                                                                     See matplotlib.pyplot.plot.
     """
-    frames = int(T / dt)
+    frames = int(P / df)
     N = len(U)
     step = N // frames
-    vmin = U.min()
-    vmax = U.max()
 
     def drawframe(i):
         plt.figure(figsize=figsize)
-        fe_plot(U[i * step], space, axis=axis, vmin=vmin, vmax=vmax, colorbar=colorbar)
+        plt.plot(nodes, np.zeros_like(nodes), 'P-', color='blue')
+        plt.plot(U[i*step], np.zeros_like(nodes), 'P-', color='red')
 
     gif_save(drawframe, frames, name)
 
@@ -423,9 +234,10 @@ def POD(U, k):
         U0 = U.cpu().numpy()
     else:
         U0 = U
-    M = np.dot(U0, U0.T)
-    N = U.shape[0]
-    w, v = eigh(M, subset_by_index=(N-k, N-1))
+    M = np.dot(U0, U0.T)                    # (ntrain,nnodes)*(ntrain,nnodes).T -> (ntrain,ntrain)
+    N = U.shape[0]                          # matrix size, number of eigenvalues
+    # compute egienvalues (w) and eigenvectors (v)
+    w, v = eigh(M, subset_by_index=(N-k, N-1))              # pick the k-ths biggest values
     basis, eigenvalues = np.dot((v/np.sqrt(w)).T, U0), w
     basis, eigenvalues = np.flip(basis, axis = 0)+0, np.flip(eigenvalues)+0
     if (isinstance(U, torch.Tensor)):
@@ -445,7 +257,7 @@ def gramschmidt(V):
 def project(vbasis, u, orth = True):
     """Given a sequence of basis vbasis = [V1,..., Vk], where Vj has shape (b, Nh), and
     a sequence of vectors u = [u1,...,uk], where uj has length Nh, yields the batched
-    matrix vector multiplication [Vj'Vjuj], i.e. the sequence of reconstructed vectors."""
+    matrix vector multiplication [(Vj'*Vj)*uj], i.e. the sequence of reconstructed vectors."""
     if(len(vbasis.shape)<3):
         return project(vbasis.unsqueeze(0), u, orth)
     else:
@@ -457,13 +269,13 @@ def project(vbasis, u, orth = True):
 def projectdown(vbasis, u):
     """Given a sequence of basis vbasis = [V1,..., Vk], where Vj has shape (b, Nh), and
     a sequence of vectors u = [u1,...,uk], where uj has length Nh, yields the batched
-    matrix vector multiplication [Vjuj], i.e. the sequence of basis coefficients."""
+    matrix vector multiplication [Vj*uj], i.e. the sequence of basis coefficients."""
     if(len(vbasis.shape)<3):
-      return projectdown(vbasis.unsqueeze(0), u)
+        return projectdown(vbasis.unsqueeze(0), u)
     else:
-      nh = np.prod(u[0].shape)
-      n, nb = vbasis.shape[:2]
-      return vbasis.reshape(n, nb, -1).matmul(u.reshape(-1,nh,1))
+        nh = np.prod(u[0].shape)
+        n, nb = vbasis.shape[:2]
+        return vbasis.reshape(n, nb, -1).matmul(u.reshape(-1,nh,1))
 
 def projectup(vbasis, c):
     """Given a sequence of basis vbasis = [V1,..., Vk], where Vj has shape (b, Nh), and
@@ -479,6 +291,7 @@ def projectup(vbasis, c):
 #========================================================================================#
 #=====================    DNNS     ==============================#
 #========================================================================================#
+from IPython.display import clear_output
 from time import perf_counter
 
 leakyReLU = torch.nn.LeakyReLU(0.1)
@@ -1160,109 +973,137 @@ scratch_folder_path.mkdir(parents=True, exist_ok=True)
 #========================================================================================#
 # Full order model (FOM solver)
 # Mesh generation
-domain = Circle((0,0), 1) - Circle((0,0), 0.5)
-mesh = geo_mesh(domain, stepsize = 0.3) # dolfin mesh with its objects
-fe_plot(mesh)
-plt.title("High fidelity mesh ($N_{h}$=%d)" % mesh.num_vertices())
+#domain = Circle((0,0), 1.0) - Circle((0,0), 0.5)
+#mesh = geo_mesh(domain, stepsize = 0.3) # dolfin mesh with its objects
+
+mesh_points = np.linspace(0.0,1.0,num=5)
+mesh_elements = np.array([0, 1, 1, 2, 2, 3, 3, 4]).reshape(4,2)
+mesh_nnodes = mesh_points.shape[0]
+mesh_nelem = mesh_elements.shape[0]
+
+# Demo: Plot tension and compression
+plt.figure(figsize=(12.5,8.33))
+plt.plot(mesh_points, np.zeros_like(mesh_points), 'P-', color='blue')
+plt.title("High fidelity mesh ($N_{h}$=%d)" % mesh_nnodes)
+plt.tight_layout(pad=2)
 plt.savefig(Path(scratch_folder_path, 'mesh_pic.pdf'))
 plt.close()
-#plt.show()
 
-# Ground truth model
-space = fe_space(mesh, 'CG', 1) # piecewise linear polynomials
-x, y = fe_coordinates(space).T  # mesh coordinates
+# Ground-truth model, shape functions and node coordinates
+x = mesh_points              # mesh node coordinates
 
-x, y = CPU.tensor(x), CPU.tensor(y)  #make a torch tensor out of numpy array
-r, theta = (x**2 + y**2).sqrt(), torch.atan2(x, y) #convert to polar coordinates (x,y)->(r,theta)
+# torch tensor and polar coordinates
+x = CPU.tensor(x)                #make a CPU-torch tensor from a numpy array
 
-# eps -> diffusion, omega -> advection
-def solution(t, eps, omega):
-  T = CPU.tensor([t])
-  d2 = (torch.cos(theta) - torch.cos(omega*T))**2 + (torch.sin(theta) - torch.sin(omega*T))**2
-  return (r-0.5)*(1.0-r)*torch.exp(- d2 /(2*eps*T) )
+# solution function
+# load -> load, stiff -> stiffness
+def solution(load, stiff):
+    """
+    Solution to 1D linear elastic problem d(E*du/dx)/dx + F = 0 (static)
+    no body forces => F=0
+    E*du/dx = -F*x + c1
+    E*u = -0.5*F*x**2 + c1*x + c2
+    pinned:       u(x=0)=0      => c2 = 0
+    displacement: u(x=l)=delta  => c1 = E*delta/l, u = x*delta/l, l=length
+    forced:       E*du/dx = P/A => c1 = P/A,       u = x*P/(A*E), A=area
 
-u = solution(t = 0.5, eps = 1, omega = 1)  #scalar solution at nodes
-fe_plot(u, space, colorbar = True)
+    Output
+        sol  (torch tensor)  solution tensor at nodes (x), area=1.0
+    """
+    return x + x*load/stiff
+
+# a picture of the solution field at t=0.5
+u = solution(load = 1, stiff = 10)  #scalar solution at nodes
+plt.figure(figsize=(12.5,8.33))
+plt.plot(mesh_points, np.zeros_like(mesh_points), 'P-', color='blue')
+plt.plot(u, np.zeros_like(mesh_points), 'P-', color='red')
 plt.title("Solution field")
+plt.tight_layout(pad=2)
 plt.savefig(Path(scratch_folder_path, 'solution_pic.pdf'))
-#plt.show()
 plt.close()
 
 # Snapshots generation
-eps = [1, 5] #[1, 5] #[0.1, 0.2]
-omega = [1, 2] #[1, 2] #[2, 5]
-time = [0.05, 2]
-ntraject = 40
-timesteps = 50
-nh = space.dim()
-U = CPU.zeros(ntraject, timesteps, nh)
-mu = CPU.zeros(ntraject, timesteps, 3)
+load = [0, 5] #[1, 5] #[0.1, 0.2]
+stiff = [10, 20] #[1, 2] #[2, 5]
+n_tests = 40                  # N experiments
+n_frames = 50                 # time frames
+n_h = mesh_nnodes              # N nodes
+U = CPU.zeros(n_tests, n_frames, n_h)   # solution tensor (n_experiments, n_frames, n_nodes)
+mu = CPU.zeros(n_tests, n_frames, 2)   # normalized tensor (n_experiments, n_frames, 2), elements in [0,1]
 
-dt = (time[1]-time[0])/timesteps
+df = (load[1]-load[0])/n_frames
 
-for i in range(ntraject):
-    e0, o0 = CPU.rand(), CPU.rand()  #random array with numbers in [0,1)
-    e = (eps[1]-eps[0])*e0+eps[0]
-    o = (omega[1]-omega[0])*o0+omega[0]
-    for j in range(timesteps):
-      t = time[0]+j*dt            # time at each step
-      U[i,j] = solution(t, e, o)  # solution by traject and time_step
+for i in range(n_tests):                     # loop on n_experiemnts
+    e0 = CPU.rand()                          # random number within [0,1)
+    e = (stiff[1]-stiff[0])*e0+stiff[0]      # random stiffness
+    for j in range(n_frames):               # loop on n_frames
+      f = load[0]+j*df                      # load at each frame
+      U[i,j] = solution(f, e)               # solution by i_experiment and j_time_step
       # normalized parameters
-      mu[i,j,0] = j/timesteps
+      mu[i,j,0] = j/n_frames
       mu[i,j,1] = e0
-      mu[i,j,2] = o0
 
+# plot experiment=0
 example_name = Path(scratch_folder_path, 'example')
-fe_gif(str(example_name), U[0], dt=dt, T=time[1] - time[0], space=space)
+fe_gif(str(example_name), U[0], df=df, P=load[1] - load[0], nodes=mesh_points)
 
 #========================================================================================#
 # Reduced order model - the POD-NN approach
 # a) Proper Orthogonal Decomposition
 
 # Splitting of the data: we use 50% of the data to design the ROM, and 50% to test its performances
-ntrain = 20
-ntrain *= timesteps
-u = U.reshape(-1, nh) # reshaping so that we list all snapshots one by one
+n_train = 20
+n_train *= n_frames
+u = U.reshape(-1, n_h) # reshaping so that we list all snapshots one by one (n_experiment*n_steps,n_nodes)
 
-pod, eigs = POD(u[:ntrain], k = 10) # POD basis vectors and corresponding singular values
-# NB: "pod" is a (nmodes,nh) tensor, that is, basis[k] contains the kth POD mode
+# POD: proper orthogonal decomposition
+pod, eigs = POD(u[:n_train], k = 3) # POD eigenvectors and corresponding eigenvalues
+# NB: "pod" is a (kmodes,nnodes) tensor, that is, basis[k] contains the kth POD mode
 
 plt.figure(figsize = (4,3))
 plt.plot(eigs, '-.', color = 'red')
 plt.title("Singular values decay", fontsize = 10)
 plt.xlabel("# modes")
 plt.savefig(Path(scratch_folder_path, 'pod_values_pic.pdf'))
-#plt.show()
 plt.close()
 
 # Let's visualize some of the basis functions
 plt.figure(figsize = (10, 2.5))
 for j in range(2):
   plt.subplot(1,2,j+1)
-  fe_plot(pod[j], space)
+  plt.plot(mesh_points, np.zeros_like(mesh_points), 'P-', color='blue')
+  plt.plot(mesh_points, pod[j], 'P-', color='red')
   plt.title("Mode n.%d" % (j+1), fontsize = 10)
 plt.tight_layout()
 plt.savefig(Path(scratch_folder_path, 'modes_pic.pdf'))
-#plt.show()
 plt.close()
 
+# until here space have been used to assign the node coordinates and nodes for solution field
+
 # How well does the POD basis represent solutions?
-l2 = L2(space)
+#l2 = L2(space)
+def l2(x):
+    return np.sqrt(np.sum(np.inner(x, x), axis=-1))
+
 def mre(utrue, upred):
-  return ( l2(utrue-upred)/l2(utrue) ).mean()
+    #return ( l2(utrue-upred)/l2(utrue) ).mean()
+    return np.mean(l2(utrue-upred)/l2(utrue))
 
 urecon = project(pod, u)             # make predictions through the decomposition functions
-print("Mean relative error (training): %s." % num2p(mre(u[ntrain:], urecon[ntrain:])))
+print("Mean relative error (training): %s." % num2p(mre(u[n_train:], urecon[n_train:])))
 
+#just working in this block, we have to modify function fe_gifz
+
+# print an experiment; -1 the last one
 which = -1
-Urecon = urecon.reshape(ntraject, timesteps, nh)
+Urecon = urecon.reshape(n_tests, n_frames, n_h)
 dimred_name = Path(scratch_folder_path, 'dimred')
-fe_gifz(str(dimred_name), (U[which], Urecon[which]), dt = dt, T = time[1]-time[0], space = space, titles = ["Ground truth", "POD approximation"])
+fe_gifz(str(dimred_name), (U[which], Urecon[which]), dt = df, T = load[1]-load[0], nodes=mesh_points, titles = ["Ground truth", "POD approximation"])
 
 #-------------------------------------------------------#
 # b) Learning the POD coordinates
 # Projection onto POD coordinates
-
+#                                                [ntrain, nbasis]
 c = projectdown(pod, u).squeeze(-1) # torch.Size([2000, 10, 1])
 nbasis = c.shape[-1]
 
@@ -1281,13 +1122,14 @@ def error(ctrue, cpred):
   return (ctrue-cpred).pow(2).sum(axis = -1).sqrt().mean()
 
 # Training phase (try with epochs = 200)
-train(phi, mu, c, ntrain = ntrain, epochs = 50, optim = torch.optim.LBFGS, lossf = mse, error = error)
+train(phi, mu, c, ntrain = n_train, epochs = 50, optim = torch.optim.LBFGS, lossf = mse, error = error)
 
 def count_trainable_params(model):
   return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 print("Trainable parameters:", count_trainable_params(phi))
 
+sys.exit()
 #-------------------------------------------------------#
 # c) Assembling the ROM
 
@@ -1295,7 +1137,7 @@ phi.freeze()
 urom = projectup(pod, phi(mu))
 
 # How good is it?
-print("ROM error: %s." % num2p(mre(u[ntrain:], urom[ntrain:])))
+print("ROM error: %s." % num2p(mre(u[n_train:], urom[n_train:])))
 
 # Visual comparison
 Urom = urom.reshape(ntraject, timesteps, nh)
